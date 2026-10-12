@@ -23,7 +23,7 @@ CRON_CMD="0 9 * * * /usr/bin/python3 -m app.ingest"
 SYSTEMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$SYSTEMD_DIR"
 
-cat > "$SYSTEMD_DIR/briefing-server.service" <<'EOF'
+cat > "$SYSTEMD_DIR/briefing-server.service" <<EOF
 [Unit]
 Description=Briefing HTTP Server
 After=network.target
@@ -40,7 +40,7 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=default.target
 EOF
 
-cat > "$SYSTEMD_DIR/briefing-tunnel.service" <<'EOF'
+cat > "$SYSTEMD_DIR/briefing-tunnel.service" <<EOF
 [Unit]
 Description=Cloudflare Tunnel to Briefing Server
 After=network.target briefing-server.service

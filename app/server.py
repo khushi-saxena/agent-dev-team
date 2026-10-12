@@ -99,7 +99,7 @@ class BriefingHandler(BaseHTTPRequestHandler):
             "<script>"
             "document.getElementById('runNowBtn').addEventListener('click', async () => {"
             "  try {"
-            "    const resp = await fetch('/run-now', {method:'POST'});
+            "    const resp = await fetch('/run-now', {method:'POST'});"
             "    const txt = await resp.text();"
             "    document.getElementById('runNowOutput').textContent = txt;"
             "  } catch (e) {"
