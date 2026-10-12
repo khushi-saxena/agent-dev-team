@@ -1,7 +1,7 @@
 # Test protocol
 
-Work in the worktree path you're given. Use `.testdata/` there for any DB or feed
-file (set the env vars the code reads, or pass paths), never `data/`.
+Your workspace IS the repo, checked out at the PR's code. Use `.testdata/` in it for any
+DB or feed file (set the env vars the code reads, or pass paths), never `data/`. Never commit.
 
 ## Always
 1. `python3 -m pytest -q`. Any failure = fail.

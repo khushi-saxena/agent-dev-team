@@ -186,26 +186,39 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
     return res, out
 
 
-def worktree(num, agent=None):
-    """per-ticket worktree on branch ticket-<n>; git author = the agent."""
-    path = WT / f"ticket-{num}"
+# openclaw agents write files relative to their workspace, so each one's
+# workspace IS a git worktree of this repo (see scripts/setup-workspaces.sh)
+OC_HOME = {"builder-ingest": "builder-ingest", "builder-page": "builder-page",
+           "builder-ops": "builder-page", "tester": "tester"}
+
+
+def checkout(num, agent=None, write=False):
+    """builders get branch ticket-<n> in their own worktree. tester and
+    reviewer get a detached copy of it, read-only by convention."""
     branch = f"ticket-{num}"
     sh("git", "fetch", "origin", "--prune", cwd=ROOT)
-    if not path.exists():
-        remote = sh("git", "ls-remote", "--heads", "origin", branch, cwd=ROOT)
-        if remote:
-            sh("git", "worktree", "add", "-B", branch, str(path), f"origin/{branch}", cwd=ROOT)
-        else:
-            sh("git", "worktree", "add", "-b", branch, str(path), "origin/main", cwd=ROOT)
+    remote = bool(sh("git", "ls-remote", "--heads", "origin", branch, cwd=ROOT))
+    start = f"origin/{branch}" if remote else "origin/main"
+
+    if agent in OC_HOME:
+        path = WT / OC_HOME[agent]
+        if not (path / ".git").exists():
+            raise RuntimeError(f"{path} isn't a worktree, run scripts/setup-workspaces.sh")
+        # drop leftovers from a previous run. persona files are in info/exclude so they survive
+        sh("git", "reset", "--hard", cwd=path)
+        sh("git", "clean", "-fd", cwd=path)
     else:
-        sh("git", "checkout", branch, cwd=path)
-        if sh("git", "ls-remote", "--heads", "origin", branch, cwd=ROOT):
-            sh("git", "reset", "--hard", f"origin/{branch}", cwd=path)
-    if agent:
-        sh("git", "config", "extensions.worktreeConfig", "true", cwd=ROOT)
+        path = WT / f"review-{num}"
+        if not path.exists():
+            sh("git", "worktree", "add", "--detach", str(path), start, cwd=ROOT)
+
+    if write:
+        sh("git", "checkout", "-B", branch, start, cwd=path)
         rt = AGENTS[agent]["runtime"]
         sh("git", "config", "--worktree", "user.name", f"{agent} ({rt} agent)", cwd=path)
         sh("git", "config", "--worktree", "user.email", f"{agent}@agents.confer-briefing.invalid", cwd=path)
+    else:
+        sh("git", "checkout", "--detach", start, cwd=path)
     return path
 
 
@@ -226,7 +239,7 @@ def bump(s, num, why):
 def step_build(issue, s):
     num, agent = issue["number"], owner(issue)
     retry = "status:changes-requested" in labels_of(issue)
-    path = worktree(num, agent)
+    path = checkout(num, agent, write=True)
     base = sh("git", "rev-parse", "HEAD", cwd=path)
 
     feedback = ""
@@ -241,8 +254,10 @@ def step_build(issue, s):
     set_status(num, "in-progress")
     prompt = (f"You are {agent}. Read PROTOCOL.md in your workspace first.\n"
               f"Ticket #{num}: {issue['title']}\n\n{issue['body']}{feedback}\n\n"
-              f"Work ONLY inside this git worktree: {path}\n"
-              f"Commit your changes there (git add + git commit, message: '#{num} <what you did>'). Do not push.\n"
+              f"Your workspace IS the git repo, already on branch ticket-{num} ({path}). "
+              f"Create and edit files there with normal relative paths like app/... and tests/....\n"
+              f"Before finishing, run `git add -A && git commit -m '#{num} <what you did>'` in the workspace "
+              f"and check `git log -1` shows your commit. Do not push.\n"
               f"End with one line: RESULT: {{\"status\": \"done\"|\"stuck\", \"summary\": \"...\", \"how_to_test\": \"...\"}}")
     res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
     if DRY:
@@ -279,7 +294,7 @@ def step_review(issue, s):
     pr = pr_for(num)
     if not pr:
         set_status(num, "ready"); return
-    path = worktree(num)
+    path = checkout(num)
     diff = gh("pr", "diff", str(pr["number"]))[:60000]
     prompt = (f"Review PR #{pr['number']} against its ticket. Use your delivery skill.\n\n"
               f"## Ticket #{num}: {issue['title']}\n{issue['body']}\n\n"
@@ -311,10 +326,10 @@ def step_test(issue, s):
     pr = pr_for(num)
     if not pr:
         set_status(num, "ready"); return
-    path = worktree(num)
+    path = checkout(num, "tester")
     prompt = (f"Test PR #{pr['number']} for ticket #{num}: {issue['title']}\n\n{issue['body']}\n\n"
-              f"Code is checked out at {path}. Follow the test protocol in AGENTS.md. "
-              f"Use a scratch data dir under {path}/.testdata, never the live data.\n"
+              f"The PR code is checked out in your workspace ({path}). Follow the test protocol in AGENTS.md. "
+              f"Use a scratch data dir .testdata/ in your workspace, never the live data. Don't commit anything.\n"
               f"End with one line: RESULT: {{\"verdict\": \"pass\"|\"fail\", \"evidence\": \"commands + key output\", "
               f"\"bug\": {{\"title\": \"...\", \"body\": \"steps, expected, actual\"}} }}")
     res, _ = run_agent("tester", prompt, path, "test", num)
