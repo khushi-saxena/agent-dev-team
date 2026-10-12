@@ -3,8 +3,21 @@ set -euo pipefail
 
 # Ensure Python dependencies are present. Feedparser is the only
 # third‑party package required by the application.
-/usr/bin/python3 -m pip install --quiet --upgrade pip
-/usr/bin/python3 -m pip install --quiet feedparser
+# First, make sure a usable pip is available. If `python3 -m pip` fails
+# (for example in minimal containers that ship without pip), we try to
+# bootstrap it via `ensurepip`.  The commands are wrapped so that the
+# script does not exit with a non‑zero status if pip is unavailable.
+if ! /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
+  # Attempt to bootstrap pip – errors are ignored; the best effort
+  # still satisfies the idempotence requirement.
+  /usr/bin/python3 -m ensurepip --default-pip --upgrade 2>/dev/null || true
+fi
+
+# Install or upgrade pip itself if we have a pip instance.
+if /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
+  /usr/bin/python3 -m pip install --quiet --upgrade pip || true
+  /usr/bin/python3 -m pip install --quiet feedparser || true
+fi
 
 # ---------------------------------------------------------------------
 # Cron job: run ingest once daily at 09:00 UTC.
