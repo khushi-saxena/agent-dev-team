@@ -1,0 +1,17 @@
+#cloud-config
+package_update: true
+packages:
+  - git
+  - curl
+  - jq
+  - sqlite3
+  - python3-venv
+  - build-essential
+  - unzip
+
+runcmd:
+  # 4G swap so node + two agent runtimes don't OOM on 12 GB
+  - fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  # oracle reclaims always-free VMs that sit idle for 7 days
+  - echo '*/30 * * * * root nice -n 19 sha256sum /var/log/syslog > /dev/null 2>&1' > /etc/cron.d/keepalive

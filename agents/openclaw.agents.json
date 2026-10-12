@@ -1,0 +1,28 @@
+{
+  "defaults": {
+    "model": {
+      "primary": "ollama-cloud/${CHEAP_MODEL}",
+      "fallbacks": ["${FALLBACK_CHEAP}"]
+    }
+  },
+  "list": [
+    {
+      "id": "builder-ingest",
+      "name": "Builder: ingest",
+      "workspace": "~/.openclaw/workspace-builder-ingest",
+      "model": { "primary": "ollama-cloud/${CHEAP_MODEL}", "fallbacks": ["${FALLBACK_CHEAP}"] }
+    },
+    {
+      "id": "builder-page",
+      "name": "Builder: page",
+      "workspace": "~/.openclaw/workspace-builder-page",
+      "model": { "primary": "ollama-cloud/${CHEAP_MODEL}", "fallbacks": ["${FALLBACK_CHEAP}"] }
+    },
+    {
+      "id": "tester",
+      "name": "Tester",
+      "workspace": "~/.openclaw/workspace-tester",
+      "model": { "primary": "ollama-cloud/${CHEAP_MODEL}", "fallbacks": ["${FALLBACK_CHEAP}"] }
+    }
+  ]
+}

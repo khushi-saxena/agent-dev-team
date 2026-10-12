@@ -1,0 +1,24 @@
+# required status check. make it required in branch protection on main:
+#   Settings > Branches > main > Require status checks > "gates"
+# then nothing merges unless the reviewer AND tester agents signed off.
+name: agent-gates
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: reviewer and tester both signed off
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "labels: $LABELS"
+          fail=0
+          echo "$LABELS" | grep -q '"review:approved"' || { echo "::error::no review:approved"; fail=1; }
+          echo "$LABELS" | grep -q '"test:passed"'     || { echo "::error::no test:passed"; fail=1; }
+          echo "$LABELS" | grep -qE '"(review:changes-requested|test:failed)"' && { echo "::error::open rejection"; fail=1; }
+          echo "$BODY" | grep -qiE 'closes #[0-9]+' || { echo "::error::PR not linked to a ticket"; fail=1; }
+          exit $fail
