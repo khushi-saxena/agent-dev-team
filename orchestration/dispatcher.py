@@ -225,6 +225,9 @@ def checkout(num, agent=None, write=False):
         path = WT / f"review-{num}"
         if not path.exists():
             sh("git", "worktree", "add", "--detach", str(path), start, cwd=ROOT)
+        # the reviewer is read-only by convention, but it once edited deploy.sh while testing it
+        sh("git", "reset", "--hard", cwd=path)
+        sh("git", "clean", "-fd", cwd=path)
 
     if write:
         sh("git", "checkout", "-B", branch, start, cwd=path)
@@ -471,8 +474,13 @@ if __name__ == "__main__":
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit(0)  # previous tick still running, ollama free tier = 1 concurrent call
-    if "--loop" in sys.argv:
-        while tick():
-            pass
-    else:
-        tick() or print("idle")
+    try:
+        if "--loop" in sys.argv:
+            while tick():
+                pass
+        else:
+            tick() or print("idle")
+    except Exception as e:
+        # a crash used to only show up in dispatcher.log. put it in the trace too
+        trace(event="tick_error", error=f"{type(e).__name__}: {e}"[:400])
+        raise
