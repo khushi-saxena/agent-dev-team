@@ -72,16 +72,23 @@ def fetch_feed() -> List[Dict[str, str]]:
         with urllib.request.urlopen(url) as resp:
             data = resp.read()
         feed = feedparser.parse(data)
+        storage_items: list[dict] = []
         for entry in feed.entries:
             item_id = _stable_id(entry)
             title = entry.get("title", "")
             link = entry.get("link", "")
-            items.append({"id": item_id, "title": title, "link": link})
+            # Build the return dict expected by callers/tests.
+            item_output = {"id": item_id, "title": title, "link": link}
+            items.append(item_output)
+            # Build the dictionary for storage that uses ``stable_id`` key.
+            storage_items.append({"stable_id": item_id, "title": title, "link": link})
         # Persist run and items
-        save_run(timestamp, success, error_msg, items)
+        save_run(timestamp, success, error_msg, storage_items)
     except Exception as exc:  # pragma: no cover - exercised by tests
         success = False
-        error_msg = str(exc)
+        # Capture a clean error message for the database. ``URLError``
+        # includes the original reason string.
+        error_msg = getattr(exc, "reason", str(exc))
         # Record the failed run with zero items
         save_run(timestamp, success, error_msg, None)
         items = []
