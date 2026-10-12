@@ -75,13 +75,17 @@ def init_db() -> None:
     """
     conn = _get_connection()
     with conn:
+        # ``runs`` now stores an integer ``new_count`` column that tracks
+        # how many items were inserted by that particular run.  The
+        # associated ingestion logic will provide this value.
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 success INTEGER NOT NULL,
-                error TEXT
+                error TEXT,
+                new_count INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -103,6 +107,7 @@ def save_run(
     success: bool,
     error: Optional[str],
     items: Iterable[Mapping[str, str | None]] | None = None,
+    new_count: int | None = None,
 ):
     """Persist a run and its related items.
 
@@ -124,10 +129,12 @@ def save_run(
     else:
         ts_str = str(timestamp)
     conn = _get_connection()
+    # ``conn`` is a context manager that automatically commits or rolls
+    # back on exception, so wrap all writes in a single ``with`` block.
     with conn:
         conn.execute(
-            "INSERT INTO runs (timestamp, success, error) VALUES (?, ?, ?)",
-            (ts_str, int(bool(success)), error),
+            "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?, ?, ?, ?)",
+            (ts_str, int(bool(success)), error, int(new_count or 0)),
         )
         if items:
             for itm in items:
