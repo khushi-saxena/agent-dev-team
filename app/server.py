@@ -22,9 +22,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .storage import DB_PATH, init_db
+from .ingest import fetch_feed
+import time
+import json
 
 HOST = "127.0.0.1"
 PORT = 8080
+
+# Global rate‑limit state – shared across all requests in this process.
+RATE_LIMIT_SECONDS = 120
+_last_run_timestamp: float | None = None
 
 
 def _fetch_runs() -> list[tuple[str, int, int]]:
@@ -85,14 +92,77 @@ class BriefingHandler(BaseHTTPRequestHandler):
         else:
             latest_part = "<p>No runs yet.</p>"
 
+        # Add button and script to trigger /run-now
+        button_html = (
+            "<button id=\"runNowBtn\">Run Now</button>"
+            "<pre id=\"runNowOutput\"></pre>"
+            "<script>"
+            "document.getElementById('runNowBtn').addEventListener('click', async () => {"
+            "  try {"
+            "    const resp = await fetch('/run-now', {method:'POST'});
+            "    const txt = await resp.text();"
+            "    document.getElementById('runNowOutput').textContent = txt;"
+            "  } catch (e) {"
+            "    document.getElementById('runNowOutput').textContent = e.toString();"
+            "  }"
+            "});"
+            "</script>"
+        )
         html_page = (
             "<html><head><title>Briefing</title></head><body>"
             f"{latest_part}"
             "<h2>Run history</h2>"
             f"{table_html}"
+            f"{button_html}"
             "</body></html>"
         )
         self._html_response(html_page)
+
+    def do_POST(self) -> None:  # noqa: D401
+        """Handle `POST /run-now` requests.
+
+        The endpoint enforces a global 2‑minute rate limit.  If the request
+        is within the window a **429 Too Many Requests** status is returned.
+        Otherwise the button triggers the ingest flow by calling
+        :func:`app.ingest.fetch_feed` and returns a JSON payload
+        ``{"status": "ok", "new": <count>}``.
+        """
+        if self.path != "/run-now":
+            # Reject unknown paths.
+            self.send_error(404, "Not Found")
+            return
+
+        global _last_run_timestamp
+        now_ts = time.time()
+        if _last_run_timestamp is not None:
+            if now_ts - _last_run_timestamp < RATE_LIMIT_SECONDS:
+                self.send_response(429)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                message = (
+                    f"Rate limit: try again in {int(RATE_LIMIT_SECONDS - (now_ts - _last_run_timestamp))} seconds"
+                )
+                self.wfile.write(json.dumps({"error": message}).encode("utf-8"))
+                return
+        # Update the timestamp before running to avoid race.
+        _last_run_timestamp = now_ts
+
+        # Ensure DB exists – safe to call multiple times.
+        init_db()
+        try:
+            # Trigger the ingest flow.
+            items = fetch_feed()
+            new_count = len(items)
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            payload = {"status": "ok", "new": new_count}
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+        except Exception as exc:  # pragma: no cover – unlikely
+            self.send_response(500)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(exc)}).encode("utf-8"))
 
 
 def main() -> None:
