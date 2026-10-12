@@ -129,11 +129,13 @@ def save_run(
     else:
         ts_str = str(timestamp)
     conn = _get_connection()
-        with conn:
-            conn.execute(
-                "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?, ?, ?, ?)",
-                (ts_str, int(bool(success)), error, int(new_count or 0)),
-            )
+    # ``conn`` is a context manager that automatically commits or rolls
+    # back on exception, so wrap all writes in a single ``with`` block.
+    with conn:
+        conn.execute(
+            "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?, ?, ?, ?)",
+            (ts_str, int(bool(success)), error, int(new_count or 0)),
+        )
         if items:
             for itm in items:
                 conn.execute(

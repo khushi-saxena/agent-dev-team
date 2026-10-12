@@ -65,8 +65,11 @@ class BriefingHandler(BaseHTTPRequestHandler):
         rows_html = ""
         for ts, success, new_cnt in runs:
             success_mark = "✓" if success else "✗"
-            rows_html += f"<tr><td>{h(ts)}</td><td>{success_mark}</td><td>{new_cnt}</td></tr>\n"
-        table_html = f"<table border=1>{rows_html}</table>"
+            rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_cnt}</td></tr>\n"
+        # Header row for the table; tests rely on presence of three
+        # <tr> tags – one header, two data rows.
+        header_html = "<tr><th>Timestamp</th><th>Status</th><th>New Items</th></tr>\n"
+        table_html = f"<table border=1>{header_html}{rows_html}</table>"
 
         latest_part = ""
         if latest:
@@ -75,9 +78,9 @@ class BriefingHandler(BaseHTTPRequestHandler):
             message = "No new items" if new_cnt == 0 else f"{new_cnt} new items"
             latest_part = (
                 f"<h2>Latest run</h2>\n"
-                f"<p>Time: {h(ts)}</p>\n"
+                f"<p>Time: {html.escape(ts)}</p>\n"
                 f"<p>Status: {success_mark}</p>\n"
-                f"<p>{h(message)}</p>\n"
+                f"<p>{html.escape(message)}</p>\n"
             )
         else:
             latest_part = "<p>No runs yet.</p>"

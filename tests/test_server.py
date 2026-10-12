@@ -14,12 +14,10 @@ The test:
 
 from __future__ import annotations
 
-import json
 import os
-import signal
-import sqlite3
 import subprocess
 import time
+import sqlite3
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -66,7 +64,8 @@ def test_server_generates_expected_html() -> None:
         assert "✗" in data  # failed row
         assert "✓" in data  # passed row
         assert "No new items" in data
-        assert data.count("<tr>") == 3  # header + two rows
+        # Header row + two data rows
+        assert data.count("<tr>") == 3
     finally:
         proc.terminate()
         try:
