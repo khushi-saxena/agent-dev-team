@@ -8,18 +8,18 @@ if ! curl -sf http://127.0.0.1:8080 > /dev/null; then
   exit 1
 fi
 
-# 2. Trigger a run‑now via the backup CLI and verify the JSON payload.
-RUN_NOW_JSON=$(/usr/bin/python3 -m app.run_now)
+# 2. Trigger a run‑now via the HTTP endpoint and verify the JSON payload.
+RUN_NOW_JSON=$(curl -s -X POST http://127.0.0.1:8080/run-now)
 # Parse with jq if available; otherwise use grep.
 if command -v jq >/dev/null 2>&1; then
   if ! echo "$RUN_NOW_JSON" | jq -e '.status=="ok"' >/dev/null; then
-    echo "FAIL: run_now did not return status ok"
+    echo "FAIL: /run-now did not return status ok"
     echo "Output: $RUN_NOW_JSON"
     exit 1
   fi
 else
   if ! echo "$RUN_NOW_JSON" | grep -q '"status":"ok"'; then
-    echo "FAIL: run_now did not return status ok"
+    echo "FAIL: /run-now did not return status ok"
     echo "Output: $RUN_NOW_JSON"
     exit 1
   fi

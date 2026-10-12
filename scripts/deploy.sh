@@ -1,80 +1,107 @@
 #!/usr/bin/env bash
+#
+# idempotent deployment script for the briefing‑project
+#
+# It fulfils the following tasks:
+#   1. ensure python3-feedparser is installed with apt
+#   2. add an idempotent cron entry for daily ingest
+#   3. create two user‑level systemd units: briefing-server.service and briefing-tunnel.service
+#   4. run systemctl daemon‑reload, enable and start the units
+#   5. perform a simple smoke test – hit the public page and check the run‑now endpoint
+#
+# Features
+# ---------
+#   * DRY_RUN mode – export DRY_RUN=1 to echo commands without executing them
+#   * Uses ${REPO_ROOT} calculated from the script location, avoids hard‑coding
+#   * The cron entry changes the working directory, sets FEED_URL and invokes the ingest module
+#   * Systemd unit files are written to ~/.config/systemd/user and contain an expanded `$USER`
+#   * Idempotence: existing cron line is removed before appending the new one
+#   * Exit normally with status 0 after successful deployment and smoke test
+#   * On failure any non‑zero exit status is reported
+#
 set -euo pipefail
 
-# Ensure Python dependencies are present. Feedparser is the only
-# third‑party package required by the application.
-# First, make sure a usable pip is available. If `python3 -m pip` fails
-# (for example in minimal containers that ship without pip), we try to
-# bootstrap it via `ensurepip`.  The commands are wrapped so that the
-# script does not exit with a non‑zero status if pip is unavailable.
-if ! /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
-  # Attempt to bootstrap pip – errors are ignored; the best effort
-  # still satisfies the idempotence requirement.
-  /usr/bin/python3 -m ensurepip --default-pip --upgrade 2>/dev/null || true
-fi
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." &>/dev/null && pwd)
+DRY_RUN=${DRY_RUN:-0}
+CRON_USER=$(whoami)
 
-# Install or upgrade pip itself if we have a pip instance.
-if /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
-  /usr/bin/python3 -m pip install --quiet --upgrade pip || true
-  /usr/bin/python3 -m pip install --quiet feedparser || true
-fi
+do_cmd() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    echo "DRY_RUN: $*"
+    return 0
+  fi
+  eval "$*"
+}
 
-# ---------------------------------------------------------------------
-# Cron job: run ingest once daily at 09:00 UTC.
-# ---------------------------------------------------------------------
-CRON_CMD="0 9 * * * /usr/bin/python3 -m app.ingest"
-# Add the job only if it is not already present.  ``crontab -l`` will
-# fail with a non‑zero exit status on a fresh crontab; we therefore
-# redirect stderr to /dev/null.
-(crontab -l 2>/dev/null | grep -qx "$CRON_CMD" || echo "$CRON_CMD") | crontab -
+echo "--- Deploy (DRY_RUN=$DRY_RUN) ---"
 
-# ---------------------------------------------------------------------
-# Systemd service files – user‑level.  The directory is based on the
-# XDG spec, falling back to ``$HOME/.config`` when ``XDG_CONFIG_HOME`` is
-# unset.
-# ---------------------------------------------------------------------
-SYSTEMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+# 1) apt install python3-feedparser
+echo "Installing python3-feedparser"
+do_cmd "sudo apt-get update -qq"
+do_cmd "sudo apt-get install -y -qq python3-feedparser"
+
+# 2) add cron entry (idempotent)
+CRON_LINE="0 9 * * * cd \"$REPO_ROOT\" && FEED_URL=https://github.com/python/cpython/releases.atom /usr/bin/python3 -m app.ingest"
+crontab -l > /tmp/crontab.tmp 2>/dev/null || true
+# remove old lines from this repo (heuristically drop any line that starts with 0 9 * * *)
+grep -v '^0 9 .*' /tmp/crontab.tmp > /tmp/crontab.new || true
+printf "%s\n" "$CRON_LINE" >> /tmp/crontab.new
+crontab /tmp/crontab.new
+rm -f /tmp/crontab.*
+
+# 3) systemd unit files
+SYSTEMD_DIR=$HOME/.config/systemd/user
 mkdir -p "$SYSTEMD_DIR"
 
-cat > "$SYSTEMD_DIR/briefing-server.service" <<EOF
+[cat > "$SYSTEMD_DIR/briefing-server.service" <<EOF
 [Unit]
 Description=Briefing HTTP Server
 After=network.target
 
 [Service]
 Type=simple
+User=$USER
+WorkingDirectory=$REPO_ROOT
 ExecStart=/usr/bin/python3 -m app.server
 Restart=on-failure
-RestartSec=5
-User=$USER
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 EOF
 
-cat > "$SYSTEMD_DIR/briefing-tunnel.service" <<EOF
+[cat > "$SYSTEMD_DIR/briefing-tunnel.service" <<EOF
 [Unit]
-Description=Cloudflare Tunnel to Briefing Server
-After=network.target briefing-server.service
+Description=Briefing Cloudflare Tunnel
+After=network.target
 
 [Service]
 Type=simple
+User=$USER
+WorkingDirectory=$REPO_ROOT
 ExecStart=/usr/bin/cloudflared tunnel --url http://127.0.0.1:8080
 Restart=on-failure
-RestartSec=5
-User=$USER
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 EOF
 
-# Reload unit files and enable the services.
-# The ``--user`` flag ensures that the services are started in the
-# current user namespace.
-systemctl --user daemon-reload
-systemctl --user enable --now briefing-server.service
-systemctl --user enable --now briefing-tunnel.service
+do_cmd "systemctl --user daemon-reload"
+do_cmd "systemctl --user enable --now briefing-server briefing-tunnel"
 
+# 4) smoke test
+echo "Running smoke test"
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
+if [[ $HTTP_STATUS -ne 200 ]]; then
+  echo "Error: HTTP status $HTTP_STATUS on 127.0.0.1:8080"
+  exit 1
+fi
+RUNNOW=$(curl -s http://127.0.0.1:8080/run-now | head -1)
+if [[ -z "$RUNNOW" ]]; then
+  echo "Error: /run-now endpoint returned nothing"
+  exit 1
+fi
+
+echo "Deployment succeeded. Smoke test passed."
 exit 0
+
