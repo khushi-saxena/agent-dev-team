@@ -83,14 +83,14 @@ def fetch_feed() -> List[Dict[str, str]]:
             # Build the dictionary for storage that uses ``stable_id`` key.
             storage_items.append({"stable_id": item_id, "title": title, "link": link})
         # Persist run and items
-        save_run(timestamp, success, error_msg, storage_items)
+        save_run(timestamp, success, error_msg, storage_items, new_count=len(storage_items))
     except Exception as exc:  # pragma: no cover - exercised by tests
         success = False
         # Capture a clean error message for the database. ``URLError``
         # includes the original reason string.
         error_msg = getattr(exc, "reason", str(exc))
         # Record the failed run with zero items
-        save_run(timestamp, success, error_msg, None)
+        save_run(timestamp, success, error_msg, None, new_count=0)
         items = []
     return items
 
