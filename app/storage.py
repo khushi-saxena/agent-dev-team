@@ -89,6 +89,19 @@ def init_db() -> None:
             );
             """
         )
+        # New table to link items to the run that produced them – this
+        # allows the UI to list only the new items for a given run.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS run_items (
+                run_id INTEGER NOT NULL,
+                stable_id TEXT NOT NULL,
+                PRIMARY KEY (run_id, stable_id),
+                FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (stable_id) REFERENCES items(stable_id) ON DELETE CASCADE
+            );
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS items (
@@ -136,8 +149,10 @@ def save_run(
             "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?, ?, ?, ?)",
             (ts_str, int(bool(success)), error, int(new_count or 0)),
         )
+        run_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         if items:
             for itm in items:
+                # Insert into items table (ignore duplicates)
                 conn.execute(
                     "INSERT OR IGNORE INTO items (stable_id, title, link, summary) VALUES (?, ?, ?, ?)",
                     (
@@ -146,6 +161,11 @@ def save_run(
                         itm.get("link"),
                         itm.get("summary"),
                     ),
+                )
+                # Link the item to the run
+                conn.execute(
+                    "INSERT INTO run_items (run_id, stable_id) VALUES (?, ?)",
+                    (run_id, itm.get("stable_id")),
                 )
     conn.close()
 
