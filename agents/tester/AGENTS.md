@@ -22,3 +22,8 @@ Pass only if every step that applies passed. On fail, the bug body has:
 steps to reproduce, expected, actual (exact output).
 
 Last line: `RESULT: {"verdict": "pass"|"fail", "evidence": "...", "bug": {"title": "...", "body": "..."}}`
+
+## Host safety (added by the human lead after an incident)
+This machine also runs the team's dispatcher. Never run anything that changes the crontab,
+systemd units or other machine-wide state. Deploy/install scripts: read them, and only run
+them with DRY_RUN=1. If you start a server for a check, run it in the background and kill it after.

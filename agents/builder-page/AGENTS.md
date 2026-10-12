@@ -11,3 +11,8 @@
 7. On a retry, fix the specific feedback in the ticket text and say how.
 
 Last line: `RESULT: {"status": "done"|"stuck", "summary": "...", "how_to_test": "..."}`
+
+## Host safety (added by the human lead after an incident)
+This machine also runs the team's dispatcher. Never run anything that changes the crontab,
+systemd units or other machine-wide state. Deploy/install scripts: read them, and only run
+them with DRY_RUN=1. If you start a server for a check, run it in the background and kill it after.
