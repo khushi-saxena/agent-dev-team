@@ -65,7 +65,7 @@ def trace(**ev):
     ev = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **ev}
     with TRACE.open("a") as f:
         f.write(json.dumps(ev) + "\n")
-    print(json.dumps(ev))
+    print(json.dumps(ev), flush=True)
 
 def state():
     return json.loads(STATE.read_text()) if STATE.exists() else {}
@@ -145,20 +145,32 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
         oc_id = a.get("as", agent)
         # fresh session per run so an agent can't "remember" an earlier attempt
         sid = f"{agent}-t{ticket}-{phase}-{int(started)}"
-        cmd = ["openclaw", "agent", "--agent", oc_id, "--session-id", sid, "--message", prompt, "--json"]
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT)
-        out = r.stdout
-        model_used = a["model"]
-        try:
-            res_obj = json.loads(out).get("result") or {}
-            meta = res_obj.get("meta") or {}
-            am = meta.get("agentMeta") or {}
-            usage = am.get("usage")
-            model_used = am.get("model") or model_used
-            out = meta.get("finalAssistantVisibleText") or "\n".join(
-                p.get("text") or "" for p in res_obj.get("payloads", []))
-        except (json.JSONDecodeError, AttributeError):
-            pass
+
+        def oc(msg):
+            cmd = ["openclaw", "agent", "--agent", oc_id, "--session-id", sid, "--message", msg, "--json"]
+            r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT)
+            text, use, model = r.stdout, None, a["model"]
+            try:
+                res_obj = json.loads(r.stdout).get("result") or {}
+                meta = res_obj.get("meta") or {}
+                am = meta.get("agentMeta") or {}
+                use, model = am.get("usage"), am.get("model") or model
+                text = meta.get("finalAssistantVisibleText") or "\n".join(
+                    p.get("text") or "" for p in res_obj.get("payloads", []))
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            return r, text, use, model
+
+        r, out, usage, model_used = oc(prompt)
+        # gpt-oss sometimes ends a tool loop without a final reply. ask once, same session
+        if r.returncode == 0 and parse_result(out) is None:
+            trace(event="nudge", agent=agent, ticket=ticket, phase=phase)
+            r, out2, use2, _ = oc("You stopped without a final reply. If the work is finished, make sure it's "
+                                  "committed, then reply with only the RESULT line. If it isn't finished, "
+                                  "finish it first, then reply with the RESULT line.")
+            out = f"{out}\n--- after nudge ---\n{out2}"
+            if usage and use2:
+                usage = {k: usage.get(k, 0) + use2.get(k, 0) for k in ("input", "output", "cacheRead", "total")}
     else:
         def hermes(model):
             # primary = whatever `hermes -p <agent> model` was set to (ollama cloud).
@@ -250,8 +262,14 @@ def step_build(issue, s):
         pr = pr_for(num)
         if pr:
             cs += ghj("pr", "view", str(pr["number"]), "--json", "comments")["comments"]
-        sent_back = [c["body"] for c in cs if "[reviewer" in c["body"] or "[tester" in c["body"]]
-        feedback = "\n\n## Why it came back\n" + "\n---\n".join(sent_back[-2:])
+        # reviewer, tester and human comments. skip the dispatcher's and builders' own notes
+        sent_back = [c["body"] for c in cs
+                     if not c["body"].startswith(("**[dispatcher", "**[builder"))]
+        feedback = "\n\n## Why it came back\n" + "\n---\n".join(sent_back[-3:])
+        # show the current test failures too. costs nothing and gives a concrete target
+        t = subprocess.run(["python3", "-m", "pytest", "-q"], cwd=path, capture_output=True, text=True, timeout=300)
+        if t.returncode:
+            feedback += "\n\n## Tests on this branch right now\n```\n" + (t.stdout + t.stderr)[-2500:] + "\n```"
 
     set_status(num, "in-progress")
     prompt = (f"You are {agent}. Read PROTOCOL.md in your workspace first.\n"
