@@ -116,15 +116,19 @@ def pr_for(num):
     return prs[0] if prs else None
 
 def parse_result(text):
-    """agents end with a line: RESULT: {...json...}"""
-    for line in reversed(text.splitlines()):
-        m = re.search(r"RESULT:\s*(\{.*\})\s*$", line.strip())
-        if m:
-            try:
-                return json.loads(m.group(1))
-            except json.JSONDecodeError:
-                pass
-    return None
+    """agents end with RESULT: {...json...}, possibly spread over several lines"""
+    i = (text or "").rfind("RESULT:")
+    if i < 0:
+        return None
+    rest = text[i + 7:]
+    j = rest.find("{")
+    if j < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(rest[j:])
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 
 # ---------- running an agent ----------
@@ -142,15 +146,17 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
         cmd = ["openclaw", "agent", "--agent", oc_id, "--message", prompt, "--json"]
         r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT)
         out = r.stdout
+        model_used = a["model"]
         try:
-            j = json.loads(out)
-            usage = j.get("usage") or j.get("meta", {}).get("usage")
-            out = j.get("reply") or j.get("text") or j.get("output") or out
-            if isinstance(out, list):
-                out = "\n".join(map(str, out))
+            res_obj = json.loads(out).get("result") or {}
+            meta = res_obj.get("meta") or {}
+            am = meta.get("agentMeta") or {}
+            usage = am.get("usage")
+            model_used = am.get("model") or model_used
+            out = meta.get("finalAssistantVisibleText") or "\n".join(
+                p.get("text") or "" for p in res_obj.get("payloads", []))
         except (json.JSONDecodeError, AttributeError):
             pass
-        model_used = a["model"]
     else:
         def hermes(model):
             # primary = whatever `hermes -p <agent> model` was set to (ollama cloud).

@@ -12,3 +12,5 @@ logs/state.json
 data/
 __pycache__/
 node_modules/
+logs/.lock
+logs/runs/
