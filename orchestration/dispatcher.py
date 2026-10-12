@@ -143,7 +143,9 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
     usage = None
     if a["runtime"] == "openclaw":
         oc_id = a.get("as", agent)
-        cmd = ["openclaw", "agent", "--agent", oc_id, "--message", prompt, "--json"]
+        # fresh session per run so an agent can't "remember" an earlier attempt
+        sid = f"{agent}-t{ticket}-{phase}-{int(started)}"
+        cmd = ["openclaw", "agent", "--agent", oc_id, "--session-id", sid, "--message", prompt, "--json"]
         r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT)
         out = r.stdout
         model_used = a["model"]
@@ -262,6 +264,14 @@ def step_build(issue, s):
     res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
     if DRY:
         return
+
+    # small models often write the code and then skip the commit. commit it
+    # for them, under their own name, and leave a trace that we did
+    if res and res.get("status") == "done" and sh("git", "status", "--porcelain", cwd=path):
+        sh("git", "add", "-A", cwd=path)
+        sh("git", "commit", "-m", f"#{num} {issue['title']}",
+           "-m", f"auto-committed by dispatcher: {agent} left its changes uncommitted", cwd=path)
+        trace(event="auto_commit", agent=agent, ticket=num)
 
     head = sh("git", "rev-parse", "HEAD", cwd=path)
     if not res or res.get("status") != "done" or head == base:

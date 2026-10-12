@@ -40,11 +40,27 @@ root = sys.argv[1]
 cfg = Path.home() / ".openclaw" / "openclaw.json"
 data = json.loads(cfg.read_text())
 shutil.copy(cfg, str(cfg) + ".pre-worktree")
+ids = ("builder-ingest", "builder-page", "tester")
 n = 0
-for a in data.get("agents", {}).get("list", []):
-    if a.get("id") in ("builder-ingest", "builder-page", "tester"):
-        a["workspace"] = f"{root}/.worktrees/{a['id']}"
-        n += 1
+def walk(node):
+    # agents are keyed by id in some versions, a list with "id" in others
+    global n
+    if isinstance(node, dict):
+        for k, v in node.items():
+            aid = k if k in ids else (v.get("id") if isinstance(v, dict) else None)
+            if isinstance(v, dict) and aid in ids and "workspace" in v:
+                v["workspace"] = f"{root}/.worktrees/{aid}"
+                n += 1
+            else:
+                walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            if isinstance(v, dict) and v.get("id") in ids and "workspace" in v:
+                v["workspace"] = f"{root}/.worktrees/{v['id']}"
+                n += 1
+            else:
+                walk(v)
+walk(data)
 cfg.write_text(json.dumps(data, indent=2))
 print(f"updated {n} agents in {cfg}")
 PY
