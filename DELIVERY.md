@@ -112,6 +112,10 @@ saved run instead (`93a0117`); after the reviewer rejected again, make the serve
 use a free port (`8e4ce92`). Each worked first try. The reviewer and tester then ran as normal and PR #18 merged.
 These three jobs were started by hand with `openclaw agent` (sessions `manual-17a/b/c`), so they aren't in the
 dispatcher trace. The comments on #17 and PR #18 say so.
+To be upfront: this is the closest I came to the brief's "don't paste a line-by-line plan into a weaker model".
+The first job reused code an agent had already written (the tester's patch). The other two were narrow, precise
+instructions from me, and builder-ingest wrote and committed the code. I'd rather show that than hide it. The real
+fix is in "What I'd change": the orchestrator should do this splitting, not the human.
 
 **3. Agents broke the host they share with the orchestration (#6).**
 The deploy ticket's script did `crontab -` with a single line. When the reviewer ran it to test it, it wiped
@@ -147,6 +151,24 @@ Smaller harness fixes along the way:
 Full report: `logs/token-report.md`, built by `scripts/token-report.py` from `logs/trace.jsonl`.
 OpenClaw usage is measured per call (`openclaw agent --json`). Hermes returns no usage per oneshot call, so its
 numbers come from `hermes -p <profile> insights` (per-profile totals). Snapshot at Oct 12 23:23 PDT:
+
+Per agent and model (snapshot Oct 12 23:23 PDT; the final numbers are in `logs/token-report.md`):
+
+| agent | runtime | model | calls | fresh (in + out) | total incl. cache |
+|---|---|---|---|---|---|
+| orchestrator | Hermes | gpt-oss:120b | 5 | 55k | 88k |
+| reviewer | Hermes | gpt-oss:120b | 22 | 0.67M | 12.18M |
+| builder-ingest | OpenClaw | gpt-oss:20b | 13 | 1.27M | 4.05M |
+| builder-ingest | OpenClaw | gpt-oss:120b (escalated, #17) | 4 | 0.66M | 21.35M |
+| builder-page | OpenClaw | gpt-oss:20b | 7 | 0.47M | 3.93M |
+| builder-ops (on builder-page's agent) | OpenClaw | gpt-oss:20b | 7 | 0.42M | 4.38M |
+| tester | OpenClaw | gpt-oss:20b | 10 | 0.45M | 3.45M |
+| **by model** | | **120b** | | **1.39M** | **33.62M** |
+| | | **20b** | | **2.61M** | **15.81M** |
+
+Ollama's own usage page agrees on the split by count: 1,394 requests on gpt-oss:120b and 1,254 on gpt-oss:20b.
+
+By phase:
 
 | phase | fresh tokens (in + out) | total incl. cache reads |
 |---|---|---|
@@ -235,8 +257,13 @@ openclaw onboard --auth-choice ollama-cloud --ollama-cloud-api-key "$OLLAMA_API_
 
 ## What I'd change
 
-- **Split builder work into small steps automatically.** One instruction per agent call (apply, fix this one
-  failure, commit) is what finally worked. The dispatcher could do that split instead of me.
+- **Have the orchestrator split work into small steps.** One instruction per agent call (apply, fix this one
+  failure, commit) is what finally worked. On #17 I did that splitting myself. It belongs to the orchestrator
+  (strong model), with the cheap builder only executing.
+- **Watch the model quota as a budget.** The month's free allowance went in two days. A per-ticket token cap
+  and a stop-after-two-failed-retries rule would have saved most of it.
+- **Wire the fallback for real.** OpenClaw agents need `fallbacks` (OpenRouter `:free` / Gemini free tier) in
+  the live config, not just in the plan.
 - **Isolate agents from the host.** Run builders and the tester in a container or a separate Linux user with no
   crontab/systemd rights. Today isolation is a reset worktree plus prompt rules, and the rules didn't hold.
 - **Make the important checks code, not prompts.** The run-twice "0 new" check and the clean-worktree check
