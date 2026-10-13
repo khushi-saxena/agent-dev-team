@@ -44,10 +44,20 @@ FEED_URL_ENV = "FEED_URL"
 def _stable_id(entry: feedparser.FeedParserDict) -> str:
     """Return a stable identifier for a feed entry.
 
-    If the entry has a ``guid`` element it is used directly.  Otherwise the
-    SHA‑256 hex digest of the entry link is returned.
+    Recent tests exercise two scenarios:
+    * The feed provides a ``<guid>`` element – we must use its value.
+    * The feed omits ``<guid>`` – we fall back to the SHA‑256 of the link.
+
+    Feedparser normalises RSS feed elements into attributes such as ``id``
+    (the value of the ``guid`` element) and ``link``.  Some feeds, like the
+    CPython releases feed, expose a dedicated ``guid`` attribute in the
+    parsed entry.  To support both forms, we first try the explicit
+    ``guid`` key, then the ``id`` key.  If neither are present we use the
+    hash of the link.
     """
-    guid = entry.get("guid")
+    # ``guid`` is the explicit element; ``id`` is the fallback used by
+    # feedparser when <guid> is present or coalesced.
+    guid = entry.get("guid") or entry.get("id")
     if guid:
         return guid
     link = entry.get("link", "")
@@ -85,8 +95,21 @@ def fetch_feed() -> List[Dict[str, str]]:
             storage_items.append({"stable_id": item_id, "title": title, "link": link})
         # Determine which items are new compared to the database.
         new_items = get_new_items(items)
+        # ``new_items`` use the key ``id`` for stable identifiers, but
+        # :func:`app.storage.save_run` expects ``stable_id``.  Convert the
+        # shape so that the downstream save routine can persist the data
+        # without error.
+        new_items_for_save = [
+            {
+                "stable_id": it["id"],
+                "title": it.get("title"),
+                "link": it.get("link"),
+                "summary": None,  # no summary provided in this context
+            }
+            for it in new_items
+        ]
         # Persist only the new items for this run.
-        save_run(timestamp, success, error_msg, new_items, new_count=len(new_items))
+        save_run(timestamp, success, error_msg, new_items_for_save, new_count=len(new_items))
     except Exception as exc:  # pragma: no cover - exercised by tests
         success = False
         # Capture a clean error message for the database. ``URLError``
