@@ -94,24 +94,32 @@ class BriefingHandler(BaseHTTPRequestHandler):
         rows_html = ""
         for run_id, ts, success, new_cnt in runs:
             success_mark = "✓" if success else "✗"
-            rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_cnt}</td></tr>\n"
+            # Friendly wording for zero‑new or failed runs.
+            if new_cnt == 0:
+                new_display = "Nothing new"
+            else:
+                new_display = str(new_cnt)
+            rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_display}</td></tr>\n"
         # Header row for the table; tests rely on presence of three
         # <tr> tags – one header, two data rows.
         header_html = "<tr><th>Timestamp</th><th>Status</th><th>New Items</th></tr>\n"
         table_html = f"<table border=1>{header_html}{rows_html}</table>"
 
+        # Build the latest‑successful‑run section.  We still keep the
+        # overall table showing all runs for the tests.
         latest_part = ""
-        if latest:
-            run_id, ts, success, new_cnt = latest
-            success_mark = "✓" if success else "✗"
-            # Determine message and optional item list.
-            if new_cnt == 0:
-                # If this is the very first run, say so. Otherwise say
-                # nothing new.
-                if len(runs) == 1:
-                    message = "First run"
-                else:
-                    message = "Nothing new"
+        # Find all successful runs (success > 0)
+        successful_runs = [r for r in runs if r[2] == 1]
+        if successful_runs:
+            # The most recent successful run
+            latest_successful = successful_runs[-1]
+            run_id, ts, success, new_cnt = latest_successful
+            success_mark = "✓"  # by definition
+            # Determine message.  Count how many successful runs exist.
+            if len(successful_runs) == 1:
+                message = "First run"
+            elif new_cnt == 0:
+                message = "Nothing new"
             else:
                 message = f"{new_cnt} new items"
             latest_part = (
