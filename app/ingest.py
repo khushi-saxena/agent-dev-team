@@ -35,6 +35,7 @@ from typing import Dict, List, Optional
 import feedparser
 
 from .storage import save_run
+from .diff import get_new_items
 
 # Environment variable that can override the default synthetic feed.
 FEED_URL_ENV = "FEED_URL"
@@ -82,8 +83,10 @@ def fetch_feed() -> List[Dict[str, str]]:
             items.append(item_output)
             # Build the dictionary for storage that uses ``stable_id`` key.
             storage_items.append({"stable_id": item_id, "title": title, "link": link})
-        # Persist run and items
-        save_run(timestamp, success, error_msg, storage_items, new_count=len(storage_items))
+        # Determine which items are new compared to the database.
+        new_items = get_new_items(items)
+        # Persist only the new items for this run.
+        save_run(timestamp, success, error_msg, new_items, new_count=len(new_items))
     except Exception as exc:  # pragma: no cover - exercised by tests
         success = False
         # Capture a clean error message for the database. ``URLError``
