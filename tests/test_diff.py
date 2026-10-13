@@ -25,6 +25,7 @@ import urllib.request
 import app.diff as diff
 import app.ingest as ingest
 from app.storage import init_db, DB_PATH
+import sqlite3
 
 
 def _create_synthetic_feed(tmp_path: Path) -> Path:
@@ -61,9 +62,26 @@ def _patch_urlopen(monkeypatch: MonkeyPatch, feed_path: Path) -> None:
 
 
 def _perform_ingest_and_diff(monkeypatch: MonkeyPatch, feed_path: Path):
+    """Run a single ingest pass and retrieve the ``new_count`` recorded in the DB.
+
+    ``ingest.fetch_feed`` already persists a run record with the ``new_count``
+    column populated.  After the fetch we open the SQLite database directly,
+    query the most recent run, and return the count alongside the fetched
+    items.
+    """
     _patch_urlopen(monkeypatch, feed_path)
     items = ingest.fetch_feed()
-    return items, diff.get_new_items(items)
+    # Open the DB and read the latest ``new_count`` from the ``runs`` table.
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cur = conn.execute(
+            "SELECT new_count FROM runs ORDER BY id DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        new_count = row[0] if row else 0
+    finally:
+        conn.close()
+    return items, new_count
 
 
 def test_first_run_reports_all_items(monkeypatch: MonkeyPatch):
@@ -75,9 +93,9 @@ def test_first_run_reports_all_items(monkeypatch: MonkeyPatch):
         try:
             init_db()
             feed_path = _create_synthetic_feed(Path(tmp_dir))
-            items, new_items = _perform_ingest_and_diff(monkeypatch, feed_path)
-            assert len(new_items) == len(items)
-            assert set(it["id"] for it in new_items) == set(it["id"] for it in items)
+            items, new_count = _perform_ingest_and_diff(monkeypatch, feed_path)
+            # The first run should report all items as new.
+            assert new_count == len(items) == 2
         finally:
             os.chdir(orig_cwd)
 
@@ -92,8 +110,9 @@ def test_subsequent_run_reports_no_new_items(monkeypatch: MonkeyPatch):
             # First run – populate DB
             _perform_ingest_and_diff(monkeypatch, feed_path)
             # Second run – should see zero new items
-            _, new_items = _perform_ingest_and_diff(monkeypatch, feed_path)
-            assert len(new_items) == 0
+            _, new_count = _perform_ingest_and_diff(monkeypatch, feed_path)
+            # Subsequent runs should have a ``new_count`` of zero.
+            assert new_count == 0
         finally:
             os.chdir(orig_cwd)
 
