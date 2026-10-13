@@ -33,15 +33,31 @@ def _setup_db() -> None:
 
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     with conn:
-        # success run with 2 items
+        # Success run with 2 items. We need to insert the items and link them.
         conn.execute(
-            "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?,?,?,?)",
-            ("2026-10-12T00:00:00", 1, None, 2),
+            "INSERT INTO runs (id, timestamp, success, error, new_count) VALUES (?,?,?,?,?)",
+            (1, "2026-10-12T00:00:00", 1, None, 2),
         )
-        # failed run with 0 items
         conn.execute(
-            "INSERT INTO runs (timestamp, success, error, new_count) VALUES (?,?,?,?)",
-            ("2026-10-13T00:00:00", 0, "oops", 0),
+            "INSERT INTO items (stable_id, title, link, summary) VALUES (?,?,?,?)",
+            ("id1", "First title", "http://example.com/1", "summary1"),
+        )
+        conn.execute(
+            "INSERT INTO items (stable_id, title, link, summary) VALUES (?,?,?,?)",
+            ("id2", "Second title", "http://example.com/2", "summary2"),
+        )
+        conn.execute(
+            "INSERT INTO run_items (run_id, stable_id) VALUES (?,?)",
+            (1, "id1"),
+        )
+        conn.execute(
+            "INSERT INTO run_items (run_id, stable_id) VALUES (?,?)",
+            (1, "id2"),
+        )
+        # Failed run with 0 items
+        conn.execute(
+            "INSERT INTO runs (id, timestamp, success, error, new_count) VALUES (?,?,?,?,?)",
+            (2, "2026-10-13T00:00:00", 0, "oops", 0),
         )
     conn.close()
 
@@ -63,7 +79,12 @@ def test_server_generates_expected_html() -> None:
         assert "2026-10-13T00:00:00" in data
         assert "✗" in data  # failed row
         assert "✓" in data  # passed row
-        assert "No new items" in data
+        assert "Nothing new" in data
+        # First run should list items
+        assert "First run" in data
+        # The two titles should appear as list items with links
+        assert "First title – <a href='http://example.com/1'>http://example.com/1</a>" in data
+        assert "Second title – <a href='http://example.com/2'>http://example.com/2</a>" in data
         # Header row + two data rows
         assert data.count("<tr>") == 3
     finally:

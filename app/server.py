@@ -26,6 +26,28 @@ from .ingest import fetch_feed
 import time
 import json
 
+def _fetch_latest_items(run_id: int) -> list[tuple[str, str]]:
+    """Return the list of ``(title, link)`` for a run.
+
+    The ``run_items`` table links a run to the stable ids of the items
+    that were stored in that run.  This helper performs a JOIN to fetch
+    the actual title and link from the ``items`` table.
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cur = conn.execute(
+        """
+        SELECT items.title, items.link
+        FROM items
+        JOIN run_items ON items.stable_id = run_items.stable_id
+        WHERE run_items.run_id = ?
+        ORDER BY items.title
+        """,
+        (run_id,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
 HOST = "127.0.0.1"
 PORT = 8080
 
@@ -34,17 +56,17 @@ RATE_LIMIT_SECONDS = 120
 _last_run_timestamp: float | None = None
 
 
-def _fetch_runs() -> list[tuple[str, int, int]]:
-    """Return a list of ``(timestamp, success, new_count)`` tuples.
+def _fetch_runs() -> list[tuple[int, str, int, int]]:
+    """Return a list of ``(id, timestamp, success, new_count)`` tuples.
 
     The rows are sorted by timestamp ascending so that the HTML table
     lines up chronologically.
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cur = conn.execute(
-        "SELECT timestamp, success, new_count FROM runs ORDER BY timestamp ASC"
+        "SELECT id, timestamp, success, new_count FROM runs ORDER BY timestamp ASC"
     )
-    rows = [(r[0], r[1], r[2]) for r in cur.fetchall()]
+    rows = [(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
     conn.close()
     return rows
 
@@ -70,36 +92,63 @@ class BriefingHandler(BaseHTTPRequestHandler):
         latest = runs[-1] if runs else None
         # Build table rows
         rows_html = ""
-        for ts, success, new_cnt in runs:
+        for run_id, ts, success, new_cnt in runs:
             success_mark = "✓" if success else "✗"
-            rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_cnt}</td></tr>\n"
+            # Friendly wording for zero‑new or failed runs.
+            if new_cnt == 0:
+                new_display = "Nothing new"
+            else:
+                new_display = str(new_cnt)
+            rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_display}</td></tr>\n"
         # Header row for the table; tests rely on presence of three
         # <tr> tags – one header, two data rows.
         header_html = "<tr><th>Timestamp</th><th>Status</th><th>New Items</th></tr>\n"
         table_html = f"<table border=1>{header_html}{rows_html}</table>"
 
+        # Build the latest‑successful‑run section.  We still keep the
+        # overall table showing all runs for the tests.
         latest_part = ""
-        if latest:
-            ts, success, new_cnt = latest
-            success_mark = "✓" if success else "✗"
-            message = "No new items" if new_cnt == 0 else f"{new_cnt} new items"
+        # Find all successful runs (success > 0)
+        successful_runs = [r for r in runs if r[2] == 1]
+        if successful_runs:
+            # The most recent successful run
+            latest_successful = successful_runs[-1]
+            run_id, ts, success, new_cnt = latest_successful
+            success_mark = "✓"  # by definition
+            # Determine message.  Count how many successful runs exist.
+            if len(successful_runs) == 1:
+                message = "First run"
+            elif new_cnt == 0:
+                message = "Nothing new"
+            else:
+                message = f"{new_cnt} new items"
             latest_part = (
                 f"<h2>Latest run</h2>\n"
                 f"<p>Time: {html.escape(ts)}</p>\n"
                 f"<p>Status: {success_mark}</p>\n"
                 f"<p>{html.escape(message)}</p>\n"
             )
+            # If there are new items, list them.
+            if new_cnt > 0:
+                items_rows = _fetch_latest_items(run_id)
+                list_items = "\n".join(
+                    [f"<li>{html.escape(title)} – <a href='{html.escape(link)}'>{html.escape(link)}</a></li>"
+                     for title, link in items_rows]
+                )
+                latest_part += f"<ul>{list_items}</ul>\n"
         else:
             latest_part = "<p>No runs yet.</p>"
 
         # Add button and script to trigger /run-now
+        # Use a raw triple‑quoted string for the JavaScript to avoid
+        # escaping complexities.
         button_html = (
-            "<button id=\"runNowBtn\">Run Now</button>"
-            "<pre id=\"runNowOutput\"></pre>"
+            "<button id='runNowBtn'>Run Now</button>"
+            "<pre id='runNowOutput'></pre>"
             "<script>"
             "document.getElementById('runNowBtn').addEventListener('click', async () => {"
             "  try {"
-            "    const resp = await fetch('/run-now', {method:'POST'});
+            "    const resp = await fetch('/run-now', {method:'POST'});"
             "    const txt = await resp.text();"
             "    document.getElementById('runNowOutput').textContent = txt;"
             "  } catch (e) {"

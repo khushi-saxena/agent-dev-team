@@ -57,7 +57,7 @@ def get_new_items(current_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
     cur = conn.execute("SELECT COUNT(*) FROM runs")
     run_count = cur.fetchone()[0]
     conn.close()
-    if run_count == 1:
+    if run_count == 0:
         # First run: all items are new.
         return current_items
     stored_ids = get_all_ids()
