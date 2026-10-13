@@ -1,50 +1,40 @@
 # Confer take-home 3: Daily Briefing, delivered by an agent team
 
-The product (a scheduled "what's new" briefing page) is built by five agents,
-3 on OpenClaw and 2 on Hermes Agent, passing GitHub issues and PRs between them.
-I wrote the infra and the agent setup. The agents write everything in `app/`, `tests/` and `scripts/deploy.sh`.
+**Live:** https://var-populations-red-star.trycloudflare.com · **Write-up:** [DELIVERY.md](DELIVERY.md)
+
+A scheduled "what's new" page for the CPython releases feed, built by five agents (3 on OpenClaw, 2 on Hermes
+Agent) passing GitHub issues and PRs between them. The agents wrote everything in `app/` and `tests/`. I wrote the
+infra, the agent setup and the dispatcher that routes tickets, and I reviewed and merged.
 
 ```
-infra/            terraform: one always-free A1 VM (2 OCPU / 12 GB), SSH only
-scripts/          install.sh (runtimes + agents), setup-agents.sh, token-report.py
-agents/           each agent's prompts + openclaw config fragment
+app/              the product (agent-written): storage, ingest, diff, server, run_now
+tests/            pytest suite (agent-written)
+infra/            terraform: one always-free OCI A1 VM (2 OCPU / 12 GB), SSH only
+agents/           personas per agent (SOUL.md, AGENTS.md), shared PROTOCOL.md
+agents/runtime/   the live openclaw + hermes configs, secrets stripped
 orchestration/    dispatcher.py (ticket router, no model), labels.sh
-briefs/           product-brief.md: what the orchestrator plans from
-.github/          agent-gates check: no merge without review:approved + test:passed
-logs/             trace.jsonl (handoffs), runs/ (full agent transcripts, git-ignored)
-DELIVERY.md       write-up, filled in at the end
+scripts/          install, agent setup, worktrees, token report, manual deploy
+briefs/           product-brief.md, what the orchestrator planned from
+.github/          required checks on main: gates (agent sign-off labels) + tests (pytest on a clean runner)
+logs/             trace.jsonl (every handoff and agent run), token-report.md. runs/ (full transcripts) stays on the VM
+RUNBOOK.md        step-by-step setup from zero
+DELIVERY.md       roster, ticket flow, what broke, token report, what I'd change
 ```
 
-## Runbook
+## Run the product locally
 
-**Day 1: infra + runtimes**
-1. Oracle Always Free account → API key → `infra/terraform.tfvars` → `terraform apply`.
-   "Out of host capacity" → bump `ad_index`, or try `ocpus=1 memory_gb=6`.
-2. New GitHub machine account for the agents, fine-grained PAT on this repo only.
-   Public repo, branch protection on `main` requiring the `gates` check.
-3. Ollama Cloud key + an OpenRouter key. Check model names with the curl in `.env.example`.
-4. On the VM: clone, fill `.env`, `./scripts/install.sh`.
-5. Smoke test each agent by hand:
-   `openclaw agent --agent tester --message "say hi, then RESULT: {\"ok\":true}"` and
-   `hermes -p reviewer chat --oneshot -Q -q "say hi"`. Fix flags against `--help` if your versions differ.
+```bash
+pip install feedparser pytest
+mkdir -p data && python3 -c "from app.storage import init_db; init_db()"
+FEED_URL=https://github.com/python/cpython/releases.atom python3 -m app.server   # http://127.0.0.1:8080
+python3 -m pytest -q
+```
 
-**Day 2-3: let it run**
-- `python3 orchestration/dispatcher.py --dry-run` first, then let cron take over.
-- Watch the board on GitHub. Merge PRs that reach `status:ready-to-merge` (`gh pr merge N --squash`).
-- `status:blocked` = an agent hit 3 send-backs. Read the run log in `logs/runs/`, tweak that agent's
-  prompt or split the ticket, relabel it `status:ready`. **Write down every time you do this**,
-  it's the best material for DELIVERY.md.
-- Don't fix the product code yourself. If you must steer, comment on the issue; the builder sees it on its next try.
+Rebuilding the whole agent team on a fresh VM is in [RUNBOOK.md](RUNBOOK.md).
 
-**Day 4: ship + evidence**
-- After the ops ticket merges, `./scripts/deploy.sh`, grab the trycloudflare URL.
-- Trigger a few runs (CLI + button) so history has ✓, ✗ and a 0-new row.
-- `python3 scripts/token-report.py`, commit `logs/trace.jsonl` + `logs/token-report.md`.
-- Fill DELIVERY.md. Record a 3-5 min screen capture of a ticket going through the pipeline.
+## How agents are told apart
 
-## Things to verify on your versions
-The CLI flags here came from the Oct 2026 docs. Check these before you trust them:
-- `openclaw agent --agent <id> --message ... --json`: output shape (dispatcher reads `reply`/`text` and `usage`).
-- `openclaw.json` per-agent `model.primary` / `fallbacks` keys, and the `ollama-cloud/` provider prefix.
-- `hermes chat --provider ollama-cloud`: provider id name.
-- OpenClaw's gateway runs tools in its own cwd; that's why prompts pass the absolute worktree path.
+Agents use my GitHub token, but every commit is authored as the agent (`builder-ingest (openclaw agent)`,
+`builder-page (openclaw agent)`; the dispatcher sets this per worktree), and every comment starts with
+`**[agent · runtime · model]**`. Agent code only reaches `main` through PRs that pass both required checks.
+My own commits to `main` are harness and docs.

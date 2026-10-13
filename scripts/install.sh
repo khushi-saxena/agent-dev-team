@@ -44,10 +44,13 @@ gh auth setup-git
 ./scripts/setup-agents.sh
 ./orchestration/labels.sh
 
-# dispatcher every 3 min; flock inside keeps it to one model call at a time
-# (ollama cloud free = 1 concurrent request)
-( crontab -l 2>/dev/null | grep -v dispatcher.py
-  echo "*/3 * * * * cd $PWD && /usr/bin/python3 orchestration/dispatcher.py >> logs/dispatcher.log 2>&1"
-) | crontab -
+# python deps for the product and its tests (PEP 668 blocks pip, use apt)
+sudo apt-get install -y python3-pytest python3-feedparser jq
+
+# dispatcher every 3 min, in /etc/cron.d so an agent's `crontab -` can't remove it
+# (that happened twice, see DELIVERY.md). flock inside keeps it to one model call at a time.
+echo "*/3 * * * * $USER cd $PWD && PATH=$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin /usr/bin/python3 orchestration/dispatcher.py >> logs/dispatcher.log 2>&1" \
+  | sudo tee /etc/cron.d/confer-dispatcher >/dev/null
+sudo chmod 644 /etc/cron.d/confer-dispatcher
 
 echo "done. dashboards: ssh -L 18789:localhost:18789 -L 9119:localhost:9119 ubuntu@<ip>"

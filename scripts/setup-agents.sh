@@ -18,7 +18,6 @@ for a in builder-ingest builder-page tester; do
 done
 
 # per-agent models live in openclaw.json. merge our fragment in.
-# VERIFY: key names against `openclaw config get agents` on your version
 python3 - <<'PY'
 import json, os, re, pathlib
 cfg_path = pathlib.Path.home()/".openclaw/openclaw.json"
@@ -40,7 +39,7 @@ openclaw gateway restart || true
 # ---- hermes: orchestrator, reviewer ----
 for p in orchestrator reviewer; do
   hermes profile list 2>/dev/null | grep -q "\b$p\b" || \
-    hermes profile create "$p" --description "$(head -1 agents/$p/SOUL.md | sed 's/^# //')"
+    hermes profile create "$p" --clone   # copies the default profile's model + provider
   pdir="$HOME/.hermes/profiles/$p"
   cp agents/$p/SOUL.md "$pdir/SOUL.md"
   mkdir -p "$pdir/skills/delivery"
