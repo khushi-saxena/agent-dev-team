@@ -87,7 +87,9 @@ def test_server_generates_expected_html() -> None:
         assert "2026-10-13T00:00:00" in data
         assert "✗" in data  # failed row
         assert "✓" in data  # passed row
-        assert "Nothing new" in data
+        # The failed run now displays its stored error message instead of
+        # the generic "Nothing new" placeholder.
+        assert "oops" in data
         # First run should list items
         assert "First run" in data
         # The two titles should appear as list items with links
