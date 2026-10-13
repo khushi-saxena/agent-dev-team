@@ -22,3 +22,13 @@ jobs:
           echo "$LABELS" | grep -qE '"(review:changes-requested|test:failed)"' && { echo "::error::open rejection"; fail=1; }
           echo "$BODY" | grep -qiE 'closes #[0-9]+' || { echo "::error::PR not linked to a ticket"; fail=1; }
           exit $fail
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest feedparser
+      - run: mkdir -p data && python -m pytest -q
