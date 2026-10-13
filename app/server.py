@@ -140,13 +140,15 @@ class BriefingHandler(BaseHTTPRequestHandler):
             latest_part = "<p>No runs yet.</p>"
 
         # Add button and script to trigger /run-now
+        # Use a raw triple‑quoted string for the JavaScript to avoid
+        # escaping complexities.
         button_html = (
-            "<button id=\"runNowBtn\">Run Now</button>"
-            "<pre id=\"runNowOutput\"></pre>"
+            "<button id='runNowBtn'>Run Now</button>"
+            "<pre id='runNowOutput'></pre>"
             "<script>"
             "document.getElementById('runNowBtn').addEventListener('click', async () => {"
             "  try {"
-            "    const resp = await fetch('/run-now', {method:'POST'});
+            "    const resp = await fetch('/run-now', {method:'POST'});"
             "    const txt = await resp.text();"
             "    document.getElementById('runNowOutput').textContent = txt;"
             "  } catch (e) {"
