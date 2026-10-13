@@ -15,6 +15,7 @@ The test:
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import time
 import sqlite3
@@ -65,15 +66,22 @@ def _setup_db() -> None:
 def test_server_generates_expected_html() -> None:
     _setup_db()
     # Launch the server process
+    # Get a free port and start the server with that PORT env var.
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    env = {**os.environ, "PORT": str(port)}
     proc = subprocess.Popen(
         ["python3", "-m", "app.server"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     # Give it a moment to start
     time.sleep(1)
     try:
-        resp = urlopen("http://127.0.0.1:8080/")
+        resp = urlopen(f"http://127.0.0.1:{port}/")
         data = resp.read().decode("utf-8")
         assert "Latest run" in data
         assert "2026-10-13T00:00:00" in data
