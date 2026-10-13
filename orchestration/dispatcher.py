@@ -369,6 +369,18 @@ def step_test(issue, s):
     if not res or res.get("verdict") not in ("pass", "fail"):
         trace(event="test_unparseable", ticket=num); return
 
+    # the tester once fixed the code in its own workspace, didn't commit, and
+    # reported pass. a pass from a dirty workspace means the PR code itself fails
+    dirty = sh("git", "status", "--porcelain", "--untracked-files=no", cwd=path)
+    if res["verdict"] == "pass" and dirty:
+        diff = sh("git", "diff", cwd=path)[:2500]
+        trace(event="tester_dirty", ticket=num, files=dirty.replace("\n", " "))
+        res = {"verdict": "fail",
+               "evidence": f"tester had to change files to get a pass, so the PR code doesn't pass as-is:\n{dirty}\n\n{diff}",
+               "bug": {"title": f"PR for #{num} only passes with the tester's local edits",
+                       "body": "The tester reported pass, but only after editing these files in its workspace "
+                               "(not committed). The builder should make these changes in the PR:\n\n" + diff}}
+
     if res["verdict"] == "pass":
         comment("pr", pr["number"], "tester", f"✅ TESTS PASS\n\n```\n{res.get('evidence', '')[:3000]}\n```")
         relabel("pr", pr["number"], add=["test:passed"], remove=["test:failed"])
