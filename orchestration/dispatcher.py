@@ -133,6 +133,15 @@ def parse_result(text):
 
 # ---------- running an agent ----------
 
+RATE_LIMIT = re.compile(r"\b(402|429)\b|needs a short break|rate.?limit|quota", re.I)
+BACKOFF = LOGS / "backoff_until"
+BACKOFF_SECS = int(os.environ.get("BACKOFF_SECS", "1200"))
+
+
+class RateLimited(Exception):
+    pass
+
+
 def run_agent(agent, prompt, cwd, phase, ticket=None):
     a = AGENTS[agent]
     started = time.time()
@@ -192,6 +201,15 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     (LOGS / "runs" / f"{stamp}-{agent}-{ticket}.log").write_text(
         f"$ {agent} ({phase}) exit={r.returncode}\n--- prompt ---\n{prompt}\n--- out ---\n{out}\n--- err ---\n{r.stderr}")
+
+    # provider said "slow down" (ollama free tier). don't count it as the agent failing,
+    # just stop calling anyone for a while
+    if r.returncode and RATE_LIMIT.search(f"{r.stdout}\n{r.stderr}"):
+        until = time.time() + BACKOFF_SECS
+        BACKOFF.write_text(str(int(until)))
+        trace(event="rate_limited", agent=agent, ticket=ticket, phase=phase,
+              until=datetime.fromtimestamp(until, timezone.utc).isoformat(timespec="seconds"))
+        raise RateLimited()
 
     res = parse_result(out or "")
     trace(event="agent_done", agent=agent, model=model_used, phase=phase, ticket=ticket,
@@ -486,12 +504,16 @@ if __name__ == "__main__":
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit(0)  # previous tick still running, ollama free tier = 1 concurrent call
+    if BACKOFF.exists() and time.time() < float(BACKOFF.read_text() or 0):
+        sys.exit(0)  # still backing off after a 429
     try:
         if "--loop" in sys.argv:
             while tick():
                 pass
         else:
             tick() or print("idle")
+    except RateLimited:
+        pass
     except Exception as e:
         # a crash used to only show up in dispatcher.log. put it in the trace too
         trace(event="tick_error", error=f"{type(e).__name__}: {e}"[:400])
