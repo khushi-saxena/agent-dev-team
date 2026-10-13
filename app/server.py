@@ -21,6 +21,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import os
 from .storage import DB_PATH, init_db
 from .ingest import fetch_feed
 import time
@@ -49,7 +50,7 @@ def _fetch_latest_items(run_id: int) -> list[tuple[str, str]]:
     return rows
 
 HOST = "127.0.0.1"
-PORT = 8080
+PORT = int(os.environ.get("PORT", "8080"))
 
 # Global rate‑limit state – shared across all requests in this process.
 RATE_LIMIT_SECONDS = 120
