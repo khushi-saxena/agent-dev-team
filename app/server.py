@@ -106,31 +106,49 @@ class BriefingHandler(BaseHTTPRequestHandler):
         header_html = "<tr><th>Timestamp</th><th>Status</th><th>New Items</th></tr>\n"
         table_html = f"<table border=1>{header_html}{rows_html}</table>"
 
-        # Build the latest‑successful‑run section.  We still keep the
-        # overall table showing all runs for the tests.
+        # Build the latest‑run section (regardless of success).  The
+        # specification requires the date and count for the *most
+        # recent* run, not necessarily a successful one.  We still show
+        # the count of new items for the latest successful run when it
+        # exists.  This keeps backward‑compatibility with the original
+        # behaviour while satisfying the ticket.
         latest_part = ""
-        # Find all successful runs (success > 0)
-        successful_runs = [r for r in runs if r[2] == 1]
-        if successful_runs:
-            # The most recent successful run
-            latest_successful = successful_runs[-1]
-            run_id, ts, success, new_cnt = latest_successful
-            success_mark = "✓"  # by definition
-            # Determine message.  Count how many successful runs exist.
-            if len(successful_runs) == 1:
-                message = "First run"
-            elif new_cnt == 0:
-                message = "Nothing new"
+        # Grab the last run entry (by timestamp).  The DB is sorted
+        # ascending so the last element is the newest.
+        if runs:
+            latest_run_id, latest_ts, latest_success, latest_new_cnt = runs[-1]
+            # Determine the status mark for the latest overall run.
+            status_mark = "✓" if latest_success else "✗"
+            # We will use the data from the *latest successful* run to
+            # render user‑friendly messages and list items.  This
+            # mirrors the old behaviour where only successful runs
+            # produced a list.
+            successful_runs = [r for r in runs if r[2] == 1]
+            latest_successful = successful_runs[-1] if successful_runs else None
+            if latest_successful:
+                run_id, ts, success, new_cnt = latest_successful
+                # Friendly text for the latest successful run.
+                if len(successful_runs) == 1:
+                    message = "First run"
+                elif new_cnt == 0:
+                    message = "Nothing new"
+                else:
+                    message = f"{new_cnt} new items"
             else:
-                message = f"{new_cnt} new items"
+                # No successful run yet.
+                message = "No runs yet."
+                run_id = None
+                ts = latest_ts  # Display latest time if available
+                new_cnt = None
+
             latest_part = (
                 f"<h2>Latest run</h2>\n"
                 f"<p>Time: {html.escape(ts)}</p>\n"
-                f"<p>Status: {success_mark}</p>\n"
+                f"<p>Status: {status_mark}</p>\n"
                 f"<p>{html.escape(message)}</p>\n"
             )
-            # If there are new items, list them.
-            if new_cnt > 0:
+            # If the latest successful run has items, list them.
+            if run_id is not None and new_cnt:
                 items_rows = _fetch_latest_items(run_id)
                 list_items = "\n".join(
                     [f"<li>{html.escape(title)} – <a href='{html.escape(link)}'>{html.escape(link)}</a></li>"
