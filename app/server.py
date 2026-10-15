@@ -99,7 +99,7 @@ class BriefingHandler(BaseHTTPRequestHandler):
             if not success:
                 # Show the error message if recorded; fall back to
                 # "Nothing new" if the error field is empty or null.
-                new_display = error_msg or "Nothing new"
+                new_display = html.escape(error_msg or "Nothing new")
             else:
                 # For successful runs keep the existing behaviour.
                 if new_cnt == 0:
@@ -120,7 +120,8 @@ class BriefingHandler(BaseHTTPRequestHandler):
         if successful_runs:
             # The most recent successful run
             latest_successful = successful_runs[-1]
-            run_id, ts, success, new_cnt = latest_successful
+            # The latest_successful tuple is (id, timestamp, success, new_count, error)
+            run_id, ts, success, new_cnt, _ = latest_successful
             success_mark = "✓"  # by definition
             # Determine message.  Count how many successful runs exist.
             if len(successful_runs) == 1:
