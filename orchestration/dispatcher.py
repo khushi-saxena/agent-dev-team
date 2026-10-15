@@ -34,6 +34,8 @@ def load_env():
 
 load_env()
 REPO = os.environ.get("GH_REPO", "")
+# free-tier fallback models allow ~15 requests/min, so ask for fewer, cheaper steps
+LIGHT = os.environ.get("LIGHT") == "1"
 
 AGENTS = {
     "orchestrator":   {"runtime": "hermes",   "model": os.environ.get("STRONG_MODEL"), "fallback": os.environ.get("FALLBACK_STRONG")},
@@ -299,6 +301,8 @@ def step_build(issue, s):
               f"Create and edit files there with normal relative paths like app/... and tests/....\n"
               f"Before finishing, run `git add -A && git commit -m '#{num} <what you did>'` in the workspace "
               f"and check `git log -1` shows your commit. Do not push.\n"
+              + ("Work in as few steps as possible: open only the files you need, make the change, "
+                 "run the tests once, commit.\n" if LIGHT else "") +
               f"End with one line: RESULT: {{\"status\": \"done\"|\"stuck\", \"summary\": \"...\", \"how_to_test\": \"...\"}}")
     res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
     if DRY:
@@ -381,6 +385,13 @@ def step_test(issue, s):
               f"Use a scratch data dir .testdata/ in your workspace, never the live data. Don't commit anything.\n"
               f"End with one line: RESULT: {{\"verdict\": \"pass\"|\"fail\", \"evidence\": \"commands + key output\", "
               f"\"bug\": {{\"title\": \"...\", \"body\": \"steps, expected, actual\"}} }}")
+    if LIGHT:
+        # full protocol trips the free-tier rate limit. CI still runs the whole suite
+        prompt = (f"Test PR #{pr['number']} for ticket #{num}: {issue['title']}\n\n{issue['body']}\n\n"
+                  f"The PR code is checked out in your workspace. Do exactly this: run "
+                  f"`mkdir -p data && python3 -m pytest -q -p no:cacheprovider` once. Do not edit any files.\n"
+                  f"End with one line: RESULT: {{\"verdict\": \"pass\"|\"fail\", \"evidence\": \"the last line pytest printed\", "
+                  f"\"bug\": {{\"title\": \"...\", \"body\": \"which test failed and the error\"}} }}")
     res, _ = run_agent("tester", prompt, path, "test", num)
     if DRY:
         return
