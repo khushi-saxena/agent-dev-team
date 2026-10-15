@@ -187,8 +187,9 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
             # primary = whatever `hermes -p <agent> model` was set to (ollama cloud).
             # fallback = openrouter, passed explicitly
             cmd = ["hermes", "-p", agent, "chat", "--oneshot", "-Q", "--yolo"]
-            if model.startswith("openrouter/"):
-                cmd += ["--provider", "openrouter", "-m", model.split("/", 1)[1]]
+            if model and model != a["model"] and "/" in model:
+                prov, m = model.split("/", 1)
+                cmd += ["--provider", prov, "-m", m]
             return subprocess.run(cmd + ["-q", prompt], cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT)
         model_used = a["model"]
         r = hermes(model_used)
@@ -304,7 +305,12 @@ def step_build(issue, s):
               + ("Work in as few steps as possible: open only the files you need, make the change, "
                  "run the tests once, commit.\n" if LIGHT else "") +
               f"End with one line: RESULT: {{\"status\": \"done\"|\"stuck\", \"summary\": \"...\", \"how_to_test\": \"...\"}}")
-    res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
+    try:
+        res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
+    except RateLimited:
+        # put it back in the queue, or it sits in in-progress forever
+        set_status(num, "changes-requested" if retry else "ready")
+        raise
     if DRY:
         return
 
@@ -353,6 +359,7 @@ def step_review(issue, s):
               f"## Ticket #{num}: {issue['title']}\n{issue['body']}\n\n"
               f"## Diff\n```diff\n{diff}\n```\n\n"
               f"The branch is checked out at {path}; you may read and run it.\n"
+              + ("Review from the diff above. You may run the tests once; don't explore other files.\n" if LIGHT else "") +
               f"End with one line: RESULT: {{\"verdict\": \"approve\"|\"reject\", \"reason\": \"one sentence\", \"notes\": [\"...\"]}}")
     res, _ = run_agent("reviewer", prompt, path, "review", num)
     if DRY:
