@@ -34,6 +34,8 @@ def load_env():
 
 load_env()
 REPO = os.environ.get("GH_REPO", "")
+# free-tier fallback models allow ~15 requests/min, so ask for fewer, cheaper steps
+LIGHT = os.environ.get("LIGHT") == "1"
 
 AGENTS = {
     "orchestrator":   {"runtime": "hermes",   "model": os.environ.get("STRONG_MODEL"), "fallback": os.environ.get("FALLBACK_STRONG")},
@@ -133,6 +135,15 @@ def parse_result(text):
 
 # ---------- running an agent ----------
 
+RATE_LIMIT = re.compile(r"\b(402|429)\b|needs a short break|rate.?limit|quota", re.I)
+BACKOFF = LOGS / "backoff_until"
+BACKOFF_SECS = int(os.environ.get("BACKOFF_SECS", "1200"))
+
+
+class RateLimited(Exception):
+    pass
+
+
 def run_agent(agent, prompt, cwd, phase, ticket=None):
     a = AGENTS[agent]
     started = time.time()
@@ -192,6 +203,15 @@ def run_agent(agent, prompt, cwd, phase, ticket=None):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     (LOGS / "runs" / f"{stamp}-{agent}-{ticket}.log").write_text(
         f"$ {agent} ({phase}) exit={r.returncode}\n--- prompt ---\n{prompt}\n--- out ---\n{out}\n--- err ---\n{r.stderr}")
+
+    # provider said "slow down" (ollama free tier). don't count it as the agent failing,
+    # just stop calling anyone for a while
+    if r.returncode and RATE_LIMIT.search(f"{r.stdout}\n{r.stderr}"):
+        until = time.time() + BACKOFF_SECS
+        BACKOFF.write_text(str(int(until)))
+        trace(event="rate_limited", agent=agent, ticket=ticket, phase=phase,
+              until=datetime.fromtimestamp(until, timezone.utc).isoformat(timespec="seconds"))
+        raise RateLimited()
 
     res = parse_result(out or "")
     trace(event="agent_done", agent=agent, model=model_used, phase=phase, ticket=ticket,
@@ -281,6 +301,8 @@ def step_build(issue, s):
               f"Create and edit files there with normal relative paths like app/... and tests/....\n"
               f"Before finishing, run `git add -A && git commit -m '#{num} <what you did>'` in the workspace "
               f"and check `git log -1` shows your commit. Do not push.\n"
+              + ("Work in as few steps as possible: open only the files you need, make the change, "
+                 "run the tests once, commit.\n" if LIGHT else "") +
               f"End with one line: RESULT: {{\"status\": \"done\"|\"stuck\", \"summary\": \"...\", \"how_to_test\": \"...\"}}")
     res, _ = run_agent(agent, prompt, path, "retry" if retry else "coding", num)
     if DRY:
@@ -363,6 +385,13 @@ def step_test(issue, s):
               f"Use a scratch data dir .testdata/ in your workspace, never the live data. Don't commit anything.\n"
               f"End with one line: RESULT: {{\"verdict\": \"pass\"|\"fail\", \"evidence\": \"commands + key output\", "
               f"\"bug\": {{\"title\": \"...\", \"body\": \"steps, expected, actual\"}} }}")
+    if LIGHT:
+        # full protocol trips the free-tier rate limit. CI still runs the whole suite
+        prompt = (f"Test PR #{pr['number']} for ticket #{num}: {issue['title']}\n\n{issue['body']}\n\n"
+                  f"The PR code is checked out in your workspace. Do exactly this: run "
+                  f"`mkdir -p data && python3 -m pytest -q -p no:cacheprovider` once. Do not edit any files.\n"
+                  f"End with one line: RESULT: {{\"verdict\": \"pass\"|\"fail\", \"evidence\": \"the last line pytest printed\", "
+                  f"\"bug\": {{\"title\": \"...\", \"body\": \"which test failed and the error\"}} }}")
     res, _ = run_agent("tester", prompt, path, "test", num)
     if DRY:
         return
@@ -486,12 +515,16 @@ if __name__ == "__main__":
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit(0)  # previous tick still running, ollama free tier = 1 concurrent call
+    if BACKOFF.exists() and time.time() < float(BACKOFF.read_text() or 0):
+        sys.exit(0)  # still backing off after a 429
     try:
         if "--loop" in sys.argv:
             while tick():
                 pass
         else:
             tick() or print("idle")
+    except RateLimited:
+        pass
     except Exception as e:
         # a crash used to only show up in dispatcher.log. put it in the trace too
         trace(event="tick_error", error=f"{type(e).__name__}: {e}"[:400])
