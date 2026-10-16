@@ -57,17 +57,17 @@ RATE_LIMIT_SECONDS = 120
 _last_run_timestamp: float | None = None
 
 
-def _fetch_runs() -> list[tuple[int, str, int, int]]:
-    """Return a list of ``(id, timestamp, success, new_count)`` tuples.
+def _fetch_runs() -> list[tuple[int, str, int, int, str | None]]:
+    """Return a list of ``(id, timestamp, success, new_count, error)`` tuples.
 
     The rows are sorted by timestamp ascending so that the HTML table
     lines up chronologically.
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cur = conn.execute(
-        "SELECT id, timestamp, success, new_count FROM runs ORDER BY timestamp ASC"
+        "SELECT id, timestamp, success, new_count, error FROM runs ORDER BY timestamp ASC"
     )
-    rows = [(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
+    rows = [(r[0], r[1], r[2], r[3], r[4]) for r in cur.fetchall()]
     conn.close()
     return rows
 
@@ -93,13 +93,19 @@ class BriefingHandler(BaseHTTPRequestHandler):
         latest = runs[-1] if runs else None
         # Build table rows
         rows_html = ""
-        for run_id, ts, success, new_cnt in runs:
+        for run_id, ts, success, new_cnt, error_msg in runs:
             success_mark = "✓" if success else "✗"
-            # Friendly wording for zero‑new or failed runs.
-            if new_cnt == 0:
-                new_display = "Nothing new"
+            # Friendly wording: failed runs display their stored error text.
+            if not success:
+                # Show the error message if recorded; fall back to
+                # "Nothing new" if the error field is empty or null.
+                new_display = html.escape(error_msg or "Nothing new")
             else:
-                new_display = str(new_cnt)
+                # For successful runs keep the existing behaviour.
+                if new_cnt == 0:
+                    new_display = "Nothing new"
+                else:
+                    new_display = str(new_cnt)
             rows_html += f"<tr><td>{html.escape(ts)}</td><td>{success_mark}</td><td>{new_display}</td></tr>\n"
         # Header row for the table; tests rely on presence of three
         # <tr> tags – one header, two data rows.
@@ -116,7 +122,7 @@ class BriefingHandler(BaseHTTPRequestHandler):
         # Grab the last run entry (by timestamp).  The DB is sorted
         # ascending so the last element is the newest.
         if runs:
-            latest_run_id, latest_ts, latest_success, latest_new_cnt = runs[-1]
+            latest_run_id, latest_ts, latest_success, latest_new_cnt, _ = runs[-1]
             # Determine the status mark for the latest overall run.
             status_mark = "✓" if latest_success else "✗"
             # We will use the data from the *latest successful* run to
@@ -126,7 +132,7 @@ class BriefingHandler(BaseHTTPRequestHandler):
             successful_runs = [r for r in runs if r[2] == 1]
             latest_successful = successful_runs[-1] if successful_runs else None
             if latest_successful:
-                run_id, ts, success, new_cnt = latest_successful
+                run_id, ts, success, new_cnt, _ = latest_successful
                 # Friendly text for the latest successful run.
                 if len(successful_runs) == 1:
                     message = "First run"
