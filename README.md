@@ -1,4 +1,4 @@
-# Confer take-home 3: Daily Briefing, delivered by an agent team
+# agent-dev-team: Daily Briefing, delivered by an agent team
 
 **Live:** https://var-populations-red-star.trycloudflare.com · **Write-up:** [DELIVERY.md](DELIVERY.md)
 
